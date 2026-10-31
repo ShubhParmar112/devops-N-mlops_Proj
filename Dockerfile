@@ -15,7 +15,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install dependencies first: this layer is cached and only rebuilt when requirements change
-COPY requirements-app.txt .
+COPY app/requirements.txt ./requirements-app.txt
 RUN pip install -r requirements-app.txt
 
 # Copy only what the app needs at runtime
