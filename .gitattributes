@@ -1,0 +1,11 @@
+# Normalise line endings so Windows checkouts work inside Linux containers / CI
+* text=auto
+*.sh   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf
+
+# Binary files
+*.pkl binary
+*.png binary
+*.db  binary
