@@ -1,4 +1,5 @@
-# Runtime-only dependencies for the Docker image / Kubernetes pods.
+# Runtime-only dependencies for the app: used by the Docker image (and so Kubernetes)
+# and by Streamlit Community Cloud, which reads requirements.txt next to the entrypoint first.
 # Versions MUST match requirements.txt - the pickled model needs the same scikit-learn/numpy.
 pandas==2.2.3
 numpy==2.1.3

@@ -68,7 +68,8 @@ same artifact.
 ```
 devops-N-mlops_Proj/
 ├── app/
-│   └── streamlit_app.py        # Web UI: prediction, model info, dataset statistics
+│   ├── streamlit_app.py        # Web UI: prediction, model info, dataset statistics
+│   └── requirements.txt        # Runtime-only deps (Docker image + Streamlit Cloud)
 ├── data/
 │   └── diabetes.csv            # Pima Indians Diabetes Dataset (768 rows)
 ├── models/
@@ -89,7 +90,6 @@ devops-N-mlops_Proj/
 ├── Dockerfile                  # Streamlit app image (python:3.11-slim, non-root, healthcheck)
 ├── .dockerignore               # Keeps .venv, .git, MLflow state and secrets out of the image
 ├── requirements.txt            # Full dev/training dependencies
-├── requirements-app.txt        # Runtime-only dependencies used by the Docker image
 ├── pytest.ini
 ├── .gitignore / .gitattributes
 └── README.md
@@ -232,11 +232,11 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 ## Docker
 
 The image contains only what the app needs at runtime: `src/`, `app/`, `models/`, `data/`,
-`reports/figures/` and the dependencies in `requirements-app.txt` (no MLflow, pytest or
+`reports/figures/` and the dependencies in `app/requirements.txt` (no MLflow, pytest or
 Matplotlib). It runs as a non-root user and has a `HEALTHCHECK` on Streamlit's
 `/_stcore/health` endpoint.
 
-> `requirements-app.txt` must pin the **same** `scikit-learn` and `numpy` versions as
+> `app/requirements.txt` must pin the **same** `scikit-learn` and `numpy` versions as
 > `requirements.txt` — a pickled model only loads reliably with the versions it was trained with.
 
 **Build and run locally** (Docker Desktop must be running):
@@ -306,6 +306,17 @@ Credentials are **never** written in the code — they are stored as encrypted G
 Without the secrets the pipeline still passes — it simply skips the push step and says so
 in the run summary.
 
+### Public deployment on Streamlit Community Cloud (optional)
+
+1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub → **Create app** → *Deploy a public app from GitHub*.
+2. Repository `ShubhParmar112/devops-N-mlops_Proj`, branch `main`, main file `app/streamlit_app.py`.
+3. **Advanced settings → Python version: 3.11** (the version the model was trained with).
+   The Python version can only be chosen at deploy time — to change it, delete and redeploy the app.
+4. **Deploy.** Cloud installs `app/requirements.txt` (it looks next to the entrypoint before the
+   repository root), so it gets the same lightweight runtime dependencies as the Docker image.
+
+Every push to `main` redeploys the app automatically.
+
 ## Roadmap / project phases
 
 - [x] **Phase 1** — Dataset, EDA, preprocessing, model training, MLflow tracking & registry
@@ -330,11 +341,12 @@ in the run summary.
 | `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified` | Docker Desktop is not running — start it and wait until it says *Engine running* |
 | `Bind for 0.0.0.0:8501 failed: port is already allocated` | Something else uses 8501 (a local `streamlit run` or an old container): `docker rm -f diabetes-app`, or map another port: `-p 8502:8501` |
 | `Conflict. The container name "/diabetes-app" is already in use` | `docker rm -f diabetes-app` |
-| `InconsistentVersionWarning` / model fails to load in the container | Versions in `requirements-app.txt` differ from `requirements.txt` — align them and rebuild |
+| `InconsistentVersionWarning` / model fails to load in the container | Versions in `app/requirements.txt` differ from `requirements.txt` — align them and rebuild |
 | `denied: requested access to the resource is denied` on `docker push` | Run `docker login`, and make sure the tag starts with *your* Docker Hub username |
 | GitHub Actions: *Push image to Docker Hub* skipped | Expected on `develop`/PRs; on `main` add the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets |
 | GitHub Actions: `unauthorized: incorrect username or password` | The token is wrong/expired or lacks *Write* scope — regenerate it and update `DOCKERHUB_TOKEN` |
 | GitHub Actions: a test fails only in CI | Reproduce in a fresh clone: `python -m src.train` then `pytest`; check that `requirements.txt` pins every package you use |
+| Streamlit Cloud: *Error installing requirements* | Check *Manage app* logs. Usually a Python version without wheels for the pinned packages — delete the app and redeploy with **Python 3.11** |
 | `git push` asks for a password | GitHub needs a **Personal Access Token** (Settings → Developer settings → Tokens), or sign in through the Git Credential Manager browser window |
 
 ## Dataset & licence
