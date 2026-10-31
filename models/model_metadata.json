@@ -1,0 +1,58 @@
+{
+  "model_name": "RandomForest",
+  "best_params": {
+    "class_weight": "balanced",
+    "max_depth": 5,
+    "min_samples_leaf": 5,
+    "n_estimators": 100
+  },
+  "selection_metric": "cv_f1",
+  "metrics": {
+    "cv_f1": 0.7018,
+    "cv_roc_auc": 0.8379,
+    "test_accuracy": 0.7403,
+    "test_precision": 0.6094,
+    "test_recall": 0.7222,
+    "test_f1": 0.661,
+    "test_roc_auc": 0.8233,
+    "cv_recall": 0.7474,
+    "cv_precision": 0.6635,
+    "cv_accuracy": 0.7785
+  },
+  "comparison": {
+    "LogisticRegression": {
+      "cv_f1": 0.6823,
+      "cv_roc_auc": 0.845,
+      "test_accuracy": 0.7078,
+      "test_precision": 0.5714,
+      "test_recall": 0.6667,
+      "test_f1": 0.6154,
+      "test_roc_auc": 0.8104
+    },
+    "RandomForest": {
+      "cv_f1": 0.7018,
+      "cv_roc_auc": 0.8379,
+      "test_accuracy": 0.7403,
+      "test_precision": 0.6094,
+      "test_recall": 0.7222,
+      "test_f1": 0.661,
+      "test_roc_auc": 0.8233
+    }
+  },
+  "features": [
+    "Pregnancies",
+    "Glucose",
+    "BloodPressure",
+    "SkinThickness",
+    "Insulin",
+    "BMI",
+    "DiabetesPedigreeFunction",
+    "Age"
+  ],
+  "mlflow_run_id": "5ce1ef96821f40d8b1d11b2250ae9507",
+  "registered_model": "diabetes-prediction-model",
+  "registered_version": 2,
+  "trained_at": "2026-10-31T07:02:42+00:00",
+  "train_rows": 614,
+  "test_rows": 154
+}
