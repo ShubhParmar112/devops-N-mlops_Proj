@@ -21,9 +21,10 @@ containerisation, orchestration, monitoring and visualisation.
 7. [Streamlit application](#streamlit-application)
 8. [Testing](#testing)
 9. [Git workflow](#git-workflow)
-10. [Roadmap / project phases](#roadmap--project-phases)
-11. [Troubleshooting](#troubleshooting)
-12. [Dataset & licence](#dataset--licence)
+10. [Docker](#docker)
+11. [Roadmap / project phases](#roadmap--project-phases)
+12. [Troubleshooting](#troubleshooting)
+13. [Dataset & licence](#dataset--licence)
 
 ---
 
@@ -82,8 +83,10 @@ Diabetes-Prediction-MLOps/
 ├── monitoring/                 # Prometheus & Grafana config        (Phase 7–8)
 ├── kubernetes/                 # deployment.yaml, service.yaml      (Phase 6)
 ├── .github/workflows/          # ci-cd.yml                          (Phase 5)
-├── Dockerfile                  #                                    (Phase 4)
-├── requirements.txt
+├── Dockerfile                  # Streamlit app image (python:3.11-slim, non-root, healthcheck)
+├── .dockerignore               # Keeps .venv, .git, MLflow state and secrets out of the image
+├── requirements.txt            # Full dev/training dependencies
+├── requirements-app.txt        # Runtime-only dependencies used by the Docker image
 ├── pytest.ini
 ├── .gitignore / .gitattributes
 └── README.md
@@ -223,12 +226,49 @@ git push -u origin feature/my-change
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
 `feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`, `build:`.
 
+## Docker
+
+The image contains only what the app needs at runtime: `src/`, `app/`, `models/`, `data/`,
+`reports/figures/` and the dependencies in `requirements-app.txt` (no MLflow, pytest or
+Matplotlib). It runs as a non-root user and has a `HEALTHCHECK` on Streamlit's
+`/_stcore/health` endpoint.
+
+> `requirements-app.txt` must pin the **same** `scikit-learn` and `numpy` versions as
+> `requirements.txt` — a pickled model only loads reliably with the versions it was trained with.
+
+**Build and run locally** (Docker Desktop must be running):
+
+```powershell
+docker build -t diabetes-prediction:latest .
+docker run -d --name diabetes-app -p 8501:8501 diabetes-prediction:latest
+# open http://localhost:8501
+
+docker ps                                   # STATUS should become "(healthy)" after ~30 s
+docker logs -f diabetes-app                 # follow logs (Ctrl+C to stop following)
+docker exec diabetes-app python -m src.predict   # run a prediction inside the container
+docker stop diabetes-app; docker rm diabetes-app # stop and remove
+```
+
+**Tag and push to Docker Hub** (replace `<dockerhub-username>` with your Docker Hub username):
+
+```powershell
+docker login                                # sign in (use an access token as the password)
+docker tag diabetes-prediction:latest <dockerhub-username>/diabetes-prediction:latest
+docker tag diabetes-prediction:latest <dockerhub-username>/diabetes-prediction:v1.0.0
+docker push <dockerhub-username>/diabetes-prediction:latest
+docker push <dockerhub-username>/diabetes-prediction:v1.0.0
+```
+
+Anyone can then run it with
+`docker run -p 8501:8501 <dockerhub-username>/diabetes-prediction:latest`.
+From Phase 5 onwards GitHub Actions builds and pushes this image automatically.
+
 ## Roadmap / project phases
 
 - [x] **Phase 1** — Dataset, EDA, preprocessing, model training, MLflow tracking & registry
 - [x] **Phase 2** — Streamlit application and pytest suite
 - [x] **Phase 3** — Git repository, branching strategy, documentation
-- [ ] **Phase 4** — Docker image and Docker Hub
+- [x] **Phase 4** — Docker image and Docker Hub
 - [ ] **Phase 5** — GitHub Actions CI/CD
 - [ ] **Phase 6** — Kubernetes deployment on Minikube
 - [ ] **Phase 7** — Prometheus metrics
@@ -244,6 +284,11 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 | `models\diabetes_model.pkl not found` | `python -m src.train` |
 | `streamlit` / `mlflow` not recognised | Activate the venv: `.\.venv\Scripts\Activate.ps1` |
 | `Port 8501 is already in use` | Stop the other instance or add `--server.port 8502` |
+| `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified` | Docker Desktop is not running — start it and wait until it says *Engine running* |
+| `Bind for 0.0.0.0:8501 failed: port is already allocated` | Something else uses 8501 (a local `streamlit run` or an old container): `docker rm -f diabetes-app`, or map another port: `-p 8502:8501` |
+| `Conflict. The container name "/diabetes-app" is already in use` | `docker rm -f diabetes-app` |
+| `InconsistentVersionWarning` / model fails to load in the container | Versions in `requirements-app.txt` differ from `requirements.txt` — align them and rebuild |
+| `denied: requested access to the resource is denied` on `docker push` | Run `docker login`, and make sure the tag starts with *your* Docker Hub username |
 | `git push` asks for a password | GitHub needs a **Personal Access Token** (Settings → Developer settings → Tokens), or sign in through the Git Credential Manager browser window |
 
 ## Dataset & licence
