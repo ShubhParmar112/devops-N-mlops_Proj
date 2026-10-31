@@ -1,5 +1,7 @@
 # 🩺 Diabetes Prediction System — MLOps & DevOps
 
+[![CI/CD](https://github.com/ShubhParmar112/devops-N-mlops_Proj/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/ShubhParmar112/devops-N-mlops_Proj/actions/workflows/ci-cd.yml)
+
 An end-to-end machine learning project that predicts whether a person is likely to be
 **diabetes-positive** or **diabetes-negative** from eight clinical measurements, built to
 demonstrate the complete ML lifecycle: experiment tracking, automated testing, CI/CD,
@@ -22,9 +24,10 @@ containerisation, orchestration, monitoring and visualisation.
 8. [Testing](#testing)
 9. [Git workflow](#git-workflow)
 10. [Docker](#docker)
-11. [Roadmap / project phases](#roadmap--project-phases)
-12. [Troubleshooting](#troubleshooting)
-13. [Dataset & licence](#dataset--licence)
+11. [CI/CD with GitHub Actions](#cicd-with-github-actions)
+12. [Roadmap / project phases](#roadmap--project-phases)
+13. [Troubleshooting](#troubleshooting)
+14. [Dataset & licence](#dataset--licence)
 
 ---
 
@@ -63,7 +66,7 @@ same artifact.
 ## Project structure
 
 ```
-Diabetes-Prediction-MLOps/
+devops-N-mlops_Proj/
 ├── app/
 │   └── streamlit_app.py        # Web UI: prediction, model info, dataset statistics
 ├── data/
@@ -82,7 +85,7 @@ Diabetes-Prediction-MLOps/
 ├── .streamlit/config.toml      # App theme and server settings
 ├── monitoring/                 # Prometheus & Grafana config        (Phase 7–8)
 ├── kubernetes/                 # deployment.yaml, service.yaml      (Phase 6)
-├── .github/workflows/          # ci-cd.yml                          (Phase 5)
+├── .github/workflows/ci-cd.yml # CI/CD: train → test → build → smoke-test → push
 ├── Dockerfile                  # Streamlit app image (python:3.11-slim, non-root, healthcheck)
 ├── .dockerignore               # Keeps .venv, .git, MLflow state and secrets out of the image
 ├── requirements.txt            # Full dev/training dependencies
@@ -98,8 +101,8 @@ Prerequisites: **Python 3.11**, **Git**, VS Code. (Docker Desktop and Minikube a
 
 ```powershell
 # 1. Clone
-git clone https://github.com/ShubhParmar112/Diabetes-Prediction-MLOps.git
-cd Diabetes-Prediction-MLOps
+git clone https://github.com/ShubhParmar112/devops-N-mlops_Proj.git
+cd devops-N-mlops_Proj
 
 # 2. Virtual environment
 py -3.11 -m venv .venv
@@ -261,7 +264,47 @@ docker push <dockerhub-username>/diabetes-prediction:v1.0.0
 
 Anyone can then run it with
 `docker run -p 8501:8501 <dockerhub-username>/diabetes-prediction:latest`.
-From Phase 5 onwards GitHub Actions builds and pushes this image automatically.
+GitHub Actions also builds and pushes this image automatically on every push to `main` (see below).
+
+## CI/CD with GitHub Actions
+
+Workflow: [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml). It runs on every push
+and pull request to `main` or `develop`, and can be started manually from the **Actions** tab
+(*Run workflow*).
+
+```
+ push / PR ──► job 1: Train & test ───────────────► job 2: Build, smoke-test & push
+               • install requirements.txt            • download the tested model artifact
+               • verify dataset                      • docker build (layer cache)
+               • python -m src.train (MLflow)        • run container, wait for /_stcore/health
+               • pytest (incl. quality gate)         • predict inside the container
+               • upload model + reports artifacts    • push to Docker Hub (main only)
+```
+
+- **Continuous integration** — every change is retrained and tested on a clean Ubuntu runner.
+  If the model drops below the quality gate (ROC-AUC ≥ 0.75, recall ≥ 0.60) or any test fails,
+  job 2 never runs.
+- **Continuous delivery** — the image is built with *the exact model that passed the tests*
+  (passed between jobs as an artifact), smoke-tested, and pushed to Docker Hub as
+  `<user>/diabetes-prediction:latest` and `:sha-<commit>`. The SHA tag makes every image
+  traceable back to its Git commit.
+- **Artifacts** — each run keeps the trained model, test report (`test-results.xml`), figures
+  and MLflow runs for 14 days (run page → *Artifacts*).
+- **Pull requests and `develop`** build and test the image but never push it.
+
+### Setting up the Docker Hub secrets
+
+Credentials are **never** written in the code — they are stored as encrypted GitHub secrets.
+
+1. Docker Hub → *Account settings* → *Personal access tokens* → **Generate new token**
+   (access: *Read & Write*). Copy the token.
+2. GitHub repo → *Settings* → *Secrets and variables* → *Actions* → **New repository secret**:
+   - `DOCKERHUB_USERNAME` = your Docker Hub username
+   - `DOCKERHUB_TOKEN` = the token from step 1
+3. Re-run the workflow (*Actions* → latest run → *Re-run all jobs*) or push to `main`.
+
+Without the secrets the pipeline still passes — it simply skips the push step and says so
+in the run summary.
 
 ## Roadmap / project phases
 
@@ -269,7 +312,7 @@ From Phase 5 onwards GitHub Actions builds and pushes this image automatically.
 - [x] **Phase 2** — Streamlit application and pytest suite
 - [x] **Phase 3** — Git repository, branching strategy, documentation
 - [x] **Phase 4** — Docker image and Docker Hub
-- [ ] **Phase 5** — GitHub Actions CI/CD
+- [x] **Phase 5** — GitHub Actions CI/CD
 - [ ] **Phase 6** — Kubernetes deployment on Minikube
 - [ ] **Phase 7** — Prometheus metrics
 - [ ] **Phase 8** — Grafana dashboards
@@ -289,6 +332,9 @@ From Phase 5 onwards GitHub Actions builds and pushes this image automatically.
 | `Conflict. The container name "/diabetes-app" is already in use` | `docker rm -f diabetes-app` |
 | `InconsistentVersionWarning` / model fails to load in the container | Versions in `requirements-app.txt` differ from `requirements.txt` — align them and rebuild |
 | `denied: requested access to the resource is denied` on `docker push` | Run `docker login`, and make sure the tag starts with *your* Docker Hub username |
+| GitHub Actions: *Push image to Docker Hub* skipped | Expected on `develop`/PRs; on `main` add the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets |
+| GitHub Actions: `unauthorized: incorrect username or password` | The token is wrong/expired or lacks *Write* scope — regenerate it and update `DOCKERHUB_TOKEN` |
+| GitHub Actions: a test fails only in CI | Reproduce in a fresh clone: `python -m src.train` then `pytest`; check that `requirements.txt` pins every package you use |
 | `git push` asks for a password | GitHub needs a **Personal Access Token** (Settings → Developer settings → Tokens), or sign in through the Git Credential Manager browser window |
 
 ## Dataset & licence
