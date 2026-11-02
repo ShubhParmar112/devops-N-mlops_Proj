@@ -8,6 +8,7 @@ from functools import lru_cache
 import joblib
 import pandas as pd
 
+from src.metrics import track_prediction
 from src.preprocessing import FEATURES, PROJECT_ROOT
 
 MODEL_PATH = PROJECT_ROOT / "models" / "diabetes_model.pkl"
@@ -54,12 +55,17 @@ def validate_input(data: dict) -> pd.DataFrame:
     return pd.DataFrame([{f: float(data[f]) for f in FEATURES}], columns=FEATURES)
 
 
-def predict(data: dict) -> dict:
-    """Return {'prediction': 0/1, 'label': str, 'probability': P(diabetes)}."""
-    X = validate_input(data)
-    model = load_model()
-    proba = float(model.predict_proba(X)[0, 1])
-    pred = int(model.predict(X)[0])
+def predict(data: dict, source: str = "form") -> dict:
+    """Return {'prediction': 0/1, 'label': str, 'probability': P(diabetes)}.
+
+    `source` labels the Prometheus metrics (form, batch or csv).
+    """
+    with track_prediction(source) as outcome:
+        X = validate_input(data)
+        model = load_model()
+        proba = float(model.predict_proba(X)[0, 1])
+        pred = int(model.predict(X)[0])
+        outcome["result"] = "positive" if pred == 1 else "negative"
     return {
         "prediction": pred,
         "label": "Diabetes Positive" if pred == 1 else "Diabetes Negative",

@@ -18,3 +18,11 @@ def test_predict_button_shows_result():
     assert not at.exception
     page = " ".join(m.value for m in at.markdown)
     assert "Diabetes Positive" in page or "Diabetes Negative" in page
+
+
+def test_batch_prediction_runs():
+    at = AppTest.from_file(APP, default_timeout=60).run()
+    batch_button = next(b for b in at.button if b.label == "Run batch on random patients")
+    batch_button.click().run()
+    assert not at.exception
+    assert any("Agreement with actual outcome" in s.value for s in at.success)
