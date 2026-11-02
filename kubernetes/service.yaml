@@ -1,0 +1,22 @@
+# Exposes the app pods through one stable address.
+# NodePort makes it reachable from outside the cluster:
+#   minikube service diabetes-app-service --url
+apiVersion: v1
+kind: Service
+metadata:
+  name: diabetes-app-service
+  labels:
+    app: diabetes-app
+spec:
+  type: NodePort
+  selector:
+    app: diabetes-app
+  ports:
+    - name: http
+      port: 8501
+      targetPort: http
+      nodePort: 30080
+    - name: metrics
+      port: 8000
+      targetPort: metrics
+      nodePort: 30081
