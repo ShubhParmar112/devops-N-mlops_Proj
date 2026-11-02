@@ -1,0 +1,51 @@
+# Monitoring stack: app + Prometheus + Grafana
+#
+# From the project root:
+#   docker compose -f monitoring/docker-compose.yml up -d --build
+# Then open:
+#   App         http://localhost:8501
+#   Metrics     http://localhost:8000/metrics
+#   Prometheus  http://localhost:9090
+#   Grafana     http://localhost:3000   (dashboard "Diabetes Prediction - Monitoring")
+name: diabetes-monitoring
+
+services:
+  diabetes-app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: diabetes-prediction:latest
+    container_name: diabetes-app
+    ports:
+      - "8501:8501"
+      - "8000:8000"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - diabetes-app
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    environment:
+      # Local demo only: viewers can see dashboards without logging in.
+      # Admin login stays admin / admin (Grafana asks you to change it on first login).
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/diabetes-dashboard.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
