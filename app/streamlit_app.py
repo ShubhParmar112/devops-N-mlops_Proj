@@ -15,6 +15,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.metrics import METRICS_PORT, set_model_info, start_metrics_server
 from src.predict import VALID_RANGES, load_metadata, load_model, predict
 from src.preprocessing import FEATURES, TARGET, ZERO_AS_MISSING, load_data
 
@@ -111,12 +112,16 @@ st.write("")
 try:
     model = get_model()
     metadata = load_metadata()
+    metrics_running = start_metrics_server()  # Prometheus endpoint, started once per process
+    set_model_info(metadata)
     df = get_data()
 except FileNotFoundError as e:
     st.error(f"{e}")
     st.stop()
 
-tab_predict, tab_model, tab_data = st.tabs(["🔍 Prediction", "🤖 Model information", "📊 Dataset statistics"])
+tab_predict, tab_batch, tab_model, tab_data = st.tabs(
+    ["🔍 Prediction", "📦 Batch prediction", "🤖 Model information", "📊 Dataset statistics"]
+)
 
 # ---------------------------------------------------------------- prediction
 with tab_predict:
@@ -254,5 +259,57 @@ with tab_data:
     with st.expander("Summary statistics"):
         st.dataframe(df.describe().T.round(2), use_container_width=True)
 
+with tab_batch:
+    st.subheader("Batch prediction")
+    st.write(
+        "Score many patients at once - either a random sample of patients from the dataset "
+        "(their real outcome is shown for comparison) or your own CSV file with the eight "
+        "feature columns. Every row goes through the same validated, monitored prediction path."
+    )
+
+    def run_batch(rows: pd.DataFrame, source: str) -> pd.DataFrame:
+        results = []
+        for _, row in rows.iterrows():
+            try:
+                r = predict(row[FEATURES].to_dict(), source=source)
+                results.append({"Prediction": r["label"], "Probability": r["probability"], "Error": ""})
+            except (ValueError, KeyError) as e:
+                results.append({"Prediction": "Failed", "Probability": None, "Error": str(e)})
+        return pd.concat([rows.reset_index(drop=True), pd.DataFrame(results)], axis=1)
+
+    left, right = st.columns(2)
+    with left:
+        n = st.slider("Number of random patients", 10, 200, 50, step=10)
+        if st.button("Run batch on random patients", type="primary"):
+            sample = df.sample(n)
+            out = run_batch(sample, "batch")
+            agree = ((out["Prediction"] == "Diabetes Positive").astype(int) == out[TARGET]).mean()
+            st.session_state["batch_result"] = (out, f"Agreement with actual outcome: {agree:.1%}")
+    with right:
+        uploaded = st.file_uploader("...or upload a CSV", type="csv",
+                                    help=f"Columns: {', '.join(FEATURES)}")
+        if uploaded is not None and st.button("Run batch on uploaded CSV"):
+            csv = pd.read_csv(uploaded)
+            missing_cols = [f for f in FEATURES if f not in csv.columns]
+            if missing_cols:
+                st.error(f"CSV is missing columns: {missing_cols}")
+            else:
+                out = run_batch(csv, "csv")
+                failed = int((out["Prediction"] == "Failed").sum())
+                st.session_state["batch_result"] = (out, f"{len(out) - failed} rows scored, {failed} failed validation")
+
+    if "batch_result" in st.session_state:
+        out, summary = st.session_state["batch_result"]
+        st.success(summary)
+        counts = out["Prediction"].value_counts()
+        c = st.columns(3)
+        c[0].metric("Rows", len(out))
+        c[1].metric("Predicted positive", int(counts.get("Diabetes Positive", 0)))
+        c[2].metric("Predicted negative", int(counts.get("Diabetes Negative", 0)))
+        st.dataframe(out, use_container_width=True, height=300)
+        st.download_button("Download results as CSV", out.to_csv(index=False), "batch_predictions.csv", "text/csv")
+
 st.divider()
+if metrics_running:
+    st.caption(f"📈 Prometheus metrics are exposed on port {METRICS_PORT} at /metrics.")
 st.caption("Diabetes Prediction System · MLOps & DevOps practical · For educational purposes only.")

@@ -25,9 +25,11 @@ containerisation, orchestration, monitoring and visualisation.
 9. [Git workflow](#git-workflow)
 10. [Docker](#docker)
 11. [CI/CD with GitHub Actions](#cicd-with-github-actions)
-12. [Roadmap / project phases](#roadmap--project-phases)
-13. [Troubleshooting](#troubleshooting)
-14. [Dataset & licence](#dataset--licence)
+12. [Kubernetes (Minikube)](#kubernetes-minikube)
+13. [Monitoring: Prometheus & Grafana](#monitoring-prometheus--grafana)
+14. [Roadmap / project phases](#roadmap--project-phases)
+15. [Troubleshooting](#troubleshooting)
+16. [Dataset & licence](#dataset--licence)
 
 ---
 
@@ -81,11 +83,17 @@ devops-N-mlops_Proj/
 │   ├── preprocessing.py        # Zero→NaN handling, imputation, scaling, train/test split
 │   ├── eda.py                  # Exploratory data analysis
 │   ├── train.py                # Grid search, evaluation, MLflow logging, model registry
-│   └── predict.py              # Input validation + prediction
-├── tests/                      # pytest suite (19 tests)
+│   ├── predict.py              # Input validation + prediction (instrumented)
+│   └── metrics.py              # Prometheus counters, latency histogram, /metrics server
+├── tests/                      # pytest suite (22 tests)
 ├── .streamlit/config.toml      # App theme and server settings
-├── monitoring/                 # Prometheus & Grafana config        (Phase 7–8)
-├── kubernetes/                 # deployment.yaml, service.yaml      (Phase 6)
+├── monitoring/
+│   ├── docker-compose.yml      # app + Prometheus + Grafana stack
+│   ├── prometheus.yml          # scrape config (app every 5 s)
+│   └── grafana/                # provisioned data source + dashboard JSON
+├── kubernetes/
+│   ├── deployment.yaml         # 2 replicas, probes, resource limits
+│   └── service.yaml            # NodePort 30080 (app) / 30081 (metrics)
 ├── .github/workflows/ci-cd.yml # CI/CD: train → test → build → smoke-test → push
 ├── Dockerfile                  # Streamlit app image (python:3.11-slim, non-root, healthcheck)
 ├── .dockerignore               # Keeps .venv, .git, MLflow state and secrets out of the image
@@ -186,9 +194,10 @@ model = mlflow.sklearn.load_model("models:/diabetes-prediction-model@champion")
 
 ## Streamlit application
 
-`app/streamlit_app.py` has three tabs:
+`app/streamlit_app.py` has four tabs:
 
 - **🔍 Prediction** — eight validated inputs with tooltips, *Predict* button, result card, probability gauge, and a chart comparing the input with dataset averages
+- **📦 Batch prediction** — score N random dataset patients (compared with their real outcome) or an uploaded CSV; results downloadable
 - **🤖 Model information** — test metrics, model comparison, hyperparameters, MLflow version/run ID, feature importance, confusion matrix
 - **📊 Dataset statistics** — headline numbers, outcome split, missing-value chart, per-feature histograms, summary table
 
@@ -317,6 +326,86 @@ in the run summary.
 
 Every push to `main` redeploys the app automatically.
 
+## Kubernetes (Minikube)
+
+`kubernetes/deployment.yaml` runs the app as **2 replicas** with readiness/liveness probes on
+`/_stcore/health` and CPU/memory requests and limits. `kubernetes/service.yaml` is a
+**NodePort** Service: port 30080 → Streamlit (8501), 30081 → metrics (8000).
+
+```powershell
+minikube start --driver=docker --cpus=2 --memory=3072
+docker build -t diabetes-prediction:latest .
+minikube image load diabetes-prediction:latest      # copy the local image into the cluster
+
+kubectl apply -f kubernetes/deployment.yaml
+kubectl apply -f kubernetes/service.yaml
+
+kubectl get deployments
+kubectl get pods -o wide
+kubectl get services
+kubectl describe deployment diabetes-app
+
+kubectl scale deployment diabetes-app --replicas=3  # scale out
+kubectl get pods
+kubectl logs deployment/diabetes-app --tail=20      # logs of one pod
+kubectl logs -l app=diabetes-app --tail=5 --prefix  # logs of all pods
+
+minikube service diabetes-app-service --url         # prints a URL to open (keep the window open)
+
+kubectl delete -f kubernetes/                       # clean up
+minikube stop
+```
+
+> On Windows with the Docker driver, `minikube service --url` starts a tunnel and must stay
+> running while you use the URL.
+
+## Monitoring: Prometheus & Grafana
+
+The app exposes Prometheus metrics on port **8000** (`/metrics`), defined in `src/metrics.py`:
+
+| Metric | Type | Meaning |
+|---|---|---|
+| `diabetes_prediction_requests_total{source}` | Counter | Every prediction request (form / batch / csv) |
+| `diabetes_prediction_success_total{source,result}` | Counter | Successful predictions, by predicted class |
+| `diabetes_prediction_failures_total{source,reason}` | Counter | Failed requests (validation or model error) |
+| `diabetes_prediction_latency_seconds{source}` | Histogram | Response time of validation + model |
+| `diabetes_model_info` | Info | Deployed model name, registry version, training time |
+| `process_cpu_seconds_total`, `process_resident_memory_bytes` | Built-in | CPU and memory of the app process |
+| `up{job="diabetes-app"}` | Prometheus | 1 if the last scrape succeeded (availability) |
+
+Start the whole stack (from the project root):
+
+```powershell
+docker compose -f monitoring/docker-compose.yml up -d --build
+docker compose -f monitoring/docker-compose.yml ps
+```
+
+| URL | What |
+|---|---|
+| http://localhost:8501 | Streamlit app (use *Batch prediction* to generate traffic) |
+| http://localhost:8000/metrics | Raw metrics |
+| http://localhost:9090/targets | Prometheus scrape targets — `diabetes-app` should be **UP** |
+| http://localhost:3000 | Grafana — opens the **Diabetes Prediction - Monitoring** dashboard |
+
+**Grafana is provisioned automatically** (`monitoring/grafana/provisioning`): the Prometheus
+data source (`http://prometheus:9090`) and the dashboard are created at startup, so no manual
+clicking is needed. To do it by hand instead: *Connections → Data sources → Add → Prometheus*,
+URL `http://prometheus:9090`, *Save & test*; then *Dashboards → New → Add visualization*, pick
+Prometheus and enter a PromQL query from the table below.
+
+| Panel | PromQL |
+|---|---|
+| Total requests | `sum(diabetes_prediction_requests_total)` |
+| Requests per second | `sum by (source) (rate(diabetes_prediction_requests_total[1m]))` |
+| Success / failure | `sum(diabetes_prediction_success_total)` / `sum(diabetes_prediction_failures_total)` |
+| Average response time | `sum(rate(diabetes_prediction_latency_seconds_sum[1m])) / sum(rate(diabetes_prediction_latency_seconds_count[1m]))` |
+| Availability | `avg_over_time(up{job="diabetes-app"}[1h]) * 100` |
+| CPU % | `rate(process_cpu_seconds_total{job="diabetes-app"}[1m]) * 100` |
+| Memory | `process_resident_memory_bytes{job="diabetes-app"}` |
+
+Grafana admin login is `admin` / `admin` (local demo only — change it when prompted).
+Stop everything with `docker compose -f monitoring/docker-compose.yml down`.
+
 ## Roadmap / project phases
 
 - [x] **Phase 1** — Dataset, EDA, preprocessing, model training, MLflow tracking & registry
@@ -324,9 +413,9 @@ Every push to `main` redeploys the app automatically.
 - [x] **Phase 3** — Git repository, branching strategy, documentation
 - [x] **Phase 4** — Docker image and Docker Hub
 - [x] **Phase 5** — GitHub Actions CI/CD
-- [ ] **Phase 6** — Kubernetes deployment on Minikube
-- [ ] **Phase 7** — Prometheus metrics
-- [ ] **Phase 8** — Grafana dashboards
+- [x] **Phase 6** — Kubernetes deployment on Minikube
+- [x] **Phase 7** — Prometheus metrics
+- [x] **Phase 8** — Grafana dashboards
 
 ## Troubleshooting
 
@@ -346,6 +435,12 @@ Every push to `main` redeploys the app automatically.
 | GitHub Actions: *Push image to Docker Hub* skipped | Expected on `develop`/PRs; on `main` add the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets |
 | GitHub Actions: `unauthorized: incorrect username or password` | The token is wrong/expired or lacks *Write* scope — regenerate it and update `DOCKERHUB_TOKEN` |
 | GitHub Actions: a test fails only in CI | Reproduce in a fresh clone: `python -m src.train` then `pytest`; check that `requirements.txt` pins every package you use |
+| Pods stuck in `ErrImageNeverPull` | The image is not inside Minikube — `minikube image load diabetes-prediction:latest`, then `kubectl rollout restart deployment diabetes-app` |
+| Pods `Running` but `0/1 READY` | Streamlit still starting — wait ~20 s; otherwise `kubectl describe pod <name>` and `kubectl logs <name>` |
+| `minikube service --url` URL does not open | Keep that terminal open (it is the tunnel); use the 127.0.0.1 URL it prints |
+| Prometheus target `diabetes-app` is DOWN | `docker logs diabetes-app`; check http://localhost:8000/metrics answers |
+| Grafana panels show *No data* | Make some predictions first (Batch tab), wait 10–15 s, check the time range (top right) |
+| Port 3000 / 9090 already in use | Stop the other program or change the left side of `ports:` in `monitoring/docker-compose.yml` |
 | Streamlit Cloud: *Error installing requirements* | Check *Manage app* logs. Usually a Python version without wheels for the pinned packages — delete the app and redeploy with **Python 3.11** |
 | `git push` asks for a password | GitHub needs a **Personal Access Token** (Settings → Developer settings → Tokens), or sign in through the Git Credential Manager browser window |
 

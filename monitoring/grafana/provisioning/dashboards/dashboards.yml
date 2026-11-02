@@ -1,0 +1,11 @@
+# Loads every dashboard JSON file in /var/lib/grafana/dashboards on startup.
+apiVersion: 1
+
+providers:
+  - name: diabetes-dashboards
+    folder: Diabetes Prediction
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

@@ -1,0 +1,60 @@
+# Runs the Streamlit app as 2 identical pods.
+# The image is built locally and loaded into Minikube:
+#   docker build -t diabetes-prediction:latest .
+#   minikube image load diabetes-prediction:latest
+# (To use Docker Hub instead, set image: <dockerhub-username>/diabetes-prediction:latest
+#  and imagePullPolicy: Always.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: diabetes-app
+  labels:
+    app: diabetes-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: diabetes-app
+  template:
+    metadata:
+      labels:
+        app: diabetes-app
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: diabetes-app
+          image: diabetes-prediction:latest
+          imagePullPolicy: Never   # use the image loaded into Minikube
+          ports:
+            - name: http
+              containerPort: 8501
+            - name: metrics
+              containerPort: 8000
+          env:
+            - name: METRICS_PORT
+              value: "8000"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          # Pod receives traffic only when Streamlit answers
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          # Pod is restarted if Streamlit stops answering
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3

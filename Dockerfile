@@ -30,11 +30,12 @@ COPY .streamlit/ ./.streamlit/
 RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
 USER appuser
 
-EXPOSE 8501
+# 8501 = Streamlit UI, 8000 = Prometheus metrics (/metrics)
+EXPOSE 8501 8000
 
 # Docker marks the container unhealthy if Streamlit stops answering
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=4)"
 
-CMD ["streamlit", "run", "app/streamlit_app.py", \
-     "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# Starts the Prometheus /metrics server (port 8000) and then Streamlit (port 8501)
+CMD ["python", "-m", "src.serve"]
